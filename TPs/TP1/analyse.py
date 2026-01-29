@@ -1,12 +1,20 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
 from PIL import Image
 
 def analyser_image_complete(chemin_image, titre):
     # 1. Charger l'image
     img_pil = Image.open(chemin_image).convert('RGB')
     donnees_rgb = np.array(img_pil)
-    
+
+    # Compression en LZW 
+    codes, shape = LZW_encode(img_pil)
+    print(sys.getsizeof(codes))
+    print(sys.getsizeof(donnees_rgb))
+    decoded_img = LZW_decode(codes, shape)
+    decoded_img_RGB = np.array(decoded_img)
+
     # Convertir en niveaux de gris pour l'analyse de luminance
     img_gris = img_pil.convert('L')
     donnees_gris = np.array(img_gris)
@@ -17,7 +25,7 @@ def analyser_image_complete(chemin_image, titre):
     
     # --- 1. APERÇU COULEUR ---
     ax1 = plt.subplot(3, 2, 1)
-    ax1.imshow(donnees_rgb)
+    ax1.imshow(decoded_img_RGB)
     ax1.set_title("1. Image Originale (Couleurs)", fontsize=14)
     ax1.axis('off')
     
@@ -82,7 +90,72 @@ def analyser_image_complete(chemin_image, titre):
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.show()
 
-# Exemple d'appel :
-# analyser_image_complete("image1_natural.png", "Image naturelle")
-analyser_image_complete("image2_synthetic.png", "Image synthétique")
-# analyser_image_complete("image3_binary.png", "Image binary")
+def LZW_encode(img):
+    arr = np.array(img, dtype=np.uint8)
+
+    height, width, _ = arr.shape
+    data = arr.tobytes()
+
+    # Initialize dictionary with single-byte entries
+    dictionary = {bytes([i]): i for i in range(256)}
+    next_code = 256
+
+    w = b""
+    encoded = []
+
+    for k in data:
+        wk = w + bytes([k])
+        if wk in dictionary:
+            w = wk
+        else:
+            encoded.append(dictionary[w])
+            dictionary[wk] = next_code
+            next_code += 1
+            w = bytes([k])
+
+    if w:
+        encoded.append(dictionary[w])
+
+    return encoded, (height, width)
+    
+
+def LZW_decode(codes, shape):
+    """
+    LZW decode a list of integer codes.
+    Returns the original byte sequence.
+    """
+    height, width = shape
+
+    # Initialize dictionary
+    dictionary = {i: bytes([i]) for i in range(256)}
+    next_code = 256
+
+    w = dictionary[codes[0]]
+    decoded = bytearray(w)
+
+    for k in codes[1:]:
+        if k in dictionary:
+            entry = dictionary[k]
+        elif k == next_code:
+            # Special LZW case
+            entry = w + w[:1]
+        else:
+            raise ValueError("Invalid LZW code")
+
+        decoded.extend(entry)
+
+        # Add new sequence to dictionary
+        dictionary[next_code] = w + entry[:1]
+        next_code += 1
+
+        w = entry
+
+    arr = np.frombuffer(bytes(decoded), dtype=np.uint8)
+    arr = arr.reshape((height, width, 3))
+
+    return Image.fromarray(arr, mode="RGB")
+
+
+#analyser_image_complete("image1_natural.png", "Image naturelle")
+#analyser_image_complete("image2_synthetic.png", "Image synthétique")
+analyser_image_complete("image3_binary.png", "Image binary")
