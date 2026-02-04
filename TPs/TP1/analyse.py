@@ -91,11 +91,8 @@ def evaluation_compression_d_image(chemin_image, titre):
     donnees_rgb = np.array(img_pil)
 
     # --- 2. Compression / Décompression LZW ---
-    codes = LZW_encode2(img_pil)
-    #code , size = LZW_encode(img_pil)
-
-    #codes = [(2, 1),"{:b}".format(250),"{:b}".format(256), "{:b}". format(257)]
-    img_decodee = LZW_decode2(codes)
+    codes = LZW_encode(img_pil)
+    img_decodee = LZW_decode(codes)
     
     #img_decodee = LZW_decode(code, size)
     donnees_decodees = np.array(img_decodee)
@@ -106,8 +103,6 @@ def evaluation_compression_d_image(chemin_image, titre):
     taille_compressee = sys.getsizeof(codes)
     taille_reconstruite = sys.getsizeof(donnees_decodees)
 
-    print(taille_compressee)
-    #print(sys.getsizeof(code))
     # --- 4. Mesures de compression ---
     taux = (1 - taille_compressee / taille_originale) * 100
     ratio = taille_originale / taille_compressee
@@ -166,35 +161,41 @@ def ratio_compression(taille_originale, taille_compressee):
     """Ratio classique"""
     return taille_originale / taille_compressee
 
-
+    
 def LZW_encode(img):
+    encoded = []
     arr = np.array(img, dtype=np.uint8)
 
     height, width, _ = arr.shape
+    encoded.append((height,width))
+
+    dictsymb = {bytes([i]): i for i in range(256)}
+
+
+    size_dict = len(dictsymb)
     data = arr.tobytes()
 
-    # Initialize dictionary with single-byte entries
-    dictionary = {bytes([i]): i for i in range(256)}
-    next_code = 256
+    i = 0
 
-    w = b""
-    encoded = []
+    while i < len(data):
+        w = bytes([data[i]])
+        i += 1
 
-    for k in data:
-        wk = w + bytes([k])
-        if wk in dictionary:
-            w = wk
-        else:
-            encoded.append(dictionary[w])
-            dictionary[wk] = next_code
-            next_code += 1
-            w = bytes([k])
+        while i < len(data) and (w + bytes([data[i]])) in dictsymb:
+            w = w + bytes([data[i]])
+            i += 1
 
-    if w:
-        encoded.append(dictionary[w])
+        # Emit code
+        encoded.append(dictsymb[w])
+        # Add new sequence to dictionary
+        if i < len(data):
+            dictsymb[w + bytes([data[i]])] = size_dict
+            size_dict += 1  
+    print(size_dict)
+    print(np.log2(size_dict))
+    return encoded
 
-    return encoded, (height, width)
-    
+# Ce code a été écrit initialement en s'inspirant du code fournit pas le professeur il fonctionne, mais extrêmement inefficace.
 def LZW_encode2(img):
     encoded = []
     arr = np.array(img, dtype=np.uint8)
@@ -239,12 +240,13 @@ def LZW_encode2(img):
     
     return encoded
 
+# Code de décodage maison qui fonctionne, mais inefficace
 def LZW_decode2(code):
     height, width = code[0]
     decoded = []
     
     dictbin = ["{:b}".format(i).zfill(int(np.ceil(np.log2(256)))) for i in range(256)]
-    dictsymb = [bytes([i]) for i in range(256)]
+    dictsymb = [[i] for i in range(256)]
   
     size_dict = len(dictsymb)
     i = 1
@@ -270,96 +272,51 @@ def LZW_decode2(code):
                 new_dict_entry = tmp_dict_entry + [dictsymb[dictbin.index(code[i+1])][0]]
                 dictsymb[-1] = new_dict_entry
         else:
-            print("Yup I don't what the fuck that is")
+            print("Symbole inconnu")
             return
         i += 1     
     arr = np.frombuffer(bytes(decoded), dtype=np.uint8)
     arr = arr.reshape((height, width, 3))
     return Image.fromarray(arr, mode="RGB")
 
-def LZW_decode(codes, shape):
-    """
-    LZW decode a list of integer codes.
-    Returns the original byte sequence.
-    """
-    height, width = shape
+def LZW_decode(code):
+    height, width = code[0]
 
     # Initialize dictionary
     dictionary = {i: bytes([i]) for i in range(256)}
     next_code = 256
 
-    w = dictionary[codes[0]]
-    decoded = bytearray(w)
+    # First code
+    prev_code = code[1]
+    decoded = bytearray(dictionary[prev_code])
 
-    for k in codes[1:]:
-        if k in dictionary:
-            entry = dictionary[k]
-        elif k == next_code:
-            # Special LZW case
-            entry = w + w[:1]
+    for curr_code in code[2:]:
+        if curr_code in dictionary:
+            entry = dictionary[curr_code]
+        elif curr_code == next_code:
+            # KwKwK case
+            entry = dictionary[prev_code] + dictionary[prev_code][:1]
         else:
             raise ValueError("Invalid LZW code")
 
         decoded.extend(entry)
 
-        # Add new sequence to dictionary
-        dictionary[next_code] = w + entry[:1]
+        # Add new dictionary entry
+        dictionary[next_code] = dictionary[prev_code] + entry[:1]
         next_code += 1
 
-        w = entry
+        prev_code = curr_code
 
-    arr = np.frombuffer(bytes(decoded), dtype=np.uint8)
+    # Rebuild image
+    arr = np.frombuffer(decoded, dtype=np.uint8)
     arr = arr.reshape((height, width, 3))
 
     return Image.fromarray(arr, mode="RGB")
 
-def pack_lzw_codes(codes):
-    """
-    Pack les codes LZW dans un flux binaire.
-    Retourne un bytes object.
-    """
-    bitstream = 0
-    bit_len = 0
-    output = bytearray()
-
-    max_code = 256
-    bits = 9
-
-    for code in codes:
-        # Ajuster la taille des codes
-        if max_code >= (1 << bits):
-            bits += 1
-
-        bitstream = (bitstream << bits) | code
-        bit_len += bits
-        max_code += 1
-
-        while bit_len >= 8:
-            bit_len -= 8
-            output.append((bitstream >> bit_len) & 0xFF)
-
-    if bit_len > 0:
-        output.append((bitstream << (8 - bit_len)) & 0xFF)
-
-    return bytes(output)
-
-#analyser_image_complete("image1_natural.png", "Image naturelle")
-#analyser_image_complete("image2_synthetic.png", "Image synthétique")
-#analyser_image_complete("image3_binary.png", "Image binary")
-images = [
-    "image1_natural.png",
-    "image2_synthetic.png",
-    "image3_binary.png"
-]
-
-titres = [
-    "Naturelle",
-    "Synthétique",
-    "Binaire"
-]
-
-#table_comparative(images, titres)
+analyser_image_complete("image1_natural.png", "Image naturelle")
+analyser_image_complete("image2_synthetic.png", "Image synthétique")
+analyser_image_complete("image3_binary.png", "Image binary")
 
 evaluation_compression_d_image("image1_natural.png", "Image naturelle")
-#evaluation_compression_d_image("image2_synthetic.png", "Image synthétique")
-#evaluation_compression_d_image("image3_binary.png", "Image binary")
+evaluation_compression_d_image("image2_synthetic.png", "Image synthétique")
+evaluation_compression_d_image("image3_binary.png", "Image binary")
