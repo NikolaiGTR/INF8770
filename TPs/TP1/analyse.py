@@ -8,12 +8,6 @@ def analyser_image_complete(chemin_image, titre):
     img_pil = Image.open(chemin_image).convert('RGB')
     donnees_rgb = np.array(img_pil)
 
-    # Compression en LZW 
-    codes, shape = LZW_encode(img_pil)
-    print(sys.getsizeof(codes))
-    print(sys.getsizeof(donnees_rgb))
-    decoded_img = LZW_decode(codes, shape)
-    decoded_img_RGB = np.array(decoded_img)
 
     # Convertir en niveaux de gris pour l'analyse de luminance
     img_gris = img_pil.convert('L')
@@ -25,7 +19,7 @@ def analyser_image_complete(chemin_image, titre):
     
     # --- 1. APERÇU COULEUR ---
     ax1 = plt.subplot(3, 2, 1)
-    ax1.imshow(decoded_img_RGB)
+    ax1.imshow(donnees_rgb)
     ax1.set_title("1. Image Originale (Couleurs)", fontsize=14)
     ax1.axis('off')
     
@@ -90,6 +84,89 @@ def analyser_image_complete(chemin_image, titre):
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.show()
 
+def evaluation_compression_d_image(chemin_image, titre):
+    
+    # --- 1. Chargement image ---
+    img_pil = Image.open(chemin_image).convert("RGB")
+    donnees_rgb = np.array(img_pil)
+
+    # --- 2. Compression / Décompression LZW ---
+    codes = LZW_encode2(img_pil)
+    #code , size = LZW_encode(img_pil)
+
+    #codes = [(2, 1),"{:b}".format(250),"{:b}".format(256), "{:b}". format(257)]
+    img_decodee = LZW_decode2(codes)
+    
+    #img_decodee = LZW_decode(code, size)
+    donnees_decodees = np.array(img_decodee)
+
+
+    # --- 3. Tailles mémoire ---
+    taille_originale = sys.getsizeof(donnees_rgb)
+    taille_compressee = sys.getsizeof(codes)
+    taille_reconstruite = sys.getsizeof(donnees_decodees)
+
+    print(taille_compressee)
+    #print(sys.getsizeof(code))
+    # --- 4. Mesures de compression ---
+    taux = (1 - taille_compressee / taille_originale) * 100
+    ratio = taille_originale / taille_compressee
+
+    # --- 5. Vérification sans perte ---
+    sans_perte = np.array_equal(donnees_rgb, donnees_decodees)
+
+    # --- 6. Affichage ---
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig.suptitle(f"Évaluation de la compression LZW\n{titre}", fontsize=18)
+
+    # Image originale
+    axes[0].imshow(donnees_rgb)
+    axes[0].set_title("Image originale")
+    axes[0].axis("off")
+
+    # Image compressée puis décompressée
+    axes[1].imshow(donnees_decodees)
+    axes[1].set_title("Image compressée → décompressée")
+    axes[1].axis("off")
+
+    # --- 7. Bloc texte synthèse ---
+    texte = (
+        f"Taille image originale : {taille_originale:,} octets\n"
+        f"Taille données compressées : {taille_compressee:,} octets\n"
+        f"Taille image reconstruite : {taille_reconstruite:,} octets\n\n"
+        f"Taux de compression : {taux:.2f} %\n"
+        f"Ratio de compression : {ratio:.2f}:1\n\n"
+        f"Compression sans perte : {'OUI' if sans_perte else 'NON'}"
+    )
+
+    plt.figtext(
+        0.5, 0.02, texte,
+        ha="center",
+        fontsize=12,
+        family="monospace",
+        bbox=dict(boxstyle="round", facecolor="honeydew")
+    )
+
+    plt.tight_layout(rect=[0, 0.08, 1, 0.9])
+    plt.show()
+
+def taille_octets(obj):
+    """Taille mémoire en octets"""
+    return sys.getsizeof(obj)
+
+def verifier_sans_perte(original, reconstruit):
+    """Vérifie l'égalité parfaite pixel par pixel"""
+    return np.array_equal(original, reconstruit)
+
+def taux_compression(taille_originale, taille_compressee):
+    """En pourcentage"""
+    return (1 - taille_compressee / taille_originale) * 100
+
+def ratio_compression(taille_originale, taille_compressee):
+    """Ratio classique"""
+    return taille_originale / taille_compressee
+
+
 def LZW_encode(img):
     arr = np.array(img, dtype=np.uint8)
 
@@ -118,6 +195,87 @@ def LZW_encode(img):
 
     return encoded, (height, width)
     
+def LZW_encode2(img):
+    encoded = []
+    arr = np.array(img, dtype=np.uint8)
+
+    height, width, _ = arr.shape
+    encoded.append((height,width))
+    dictbin = []
+    dictsymb = []
+    
+    for i in range(256):
+        dictbin += ["{:b}".format(i).zfill(int(np.ceil(np.log2(256))))]
+        dictsymb += ["{:b}".format(i)]
+
+    size_dict = len(dictsymb)
+    data = arr.tobytes()
+
+    i = 0
+    longueur = 0
+    while i < len(data):
+        to_add_dict = "{:b}".format(data[i]) # Caracter to add in dict (+1 char)
+        encoded_block = "{:b}".format(data[i]) # Caracter to add to coded block
+
+        while to_add_dict in dictsymb and i < len(data):
+            i += 1
+            encoded_block = to_add_dict
+            if i < len(data):
+                to_add_dict += "{:b}".format(data[i])
+        binary_code = [dictbin[dictsymb.index(encoded_block)]]
+        encoded += binary_code
+        longueur += len(binary_code[0])
+
+        if i < len(data):
+            dictsymb += [to_add_dict]
+            dictbin += ["{:b}".format(size_dict)]
+            size_dict +=1
+
+        # Ajout bit pour encoder si necessaire
+        if np.ceil(np.log2(size_dict)) > len(encoded[-1]):
+            for j in range(size_dict):
+                dictbin[j] = "{:b}".format(j).zfill(int(np.ceil(np.log2(size_dict))))
+
+    
+    return encoded
+
+def LZW_decode2(code):
+    height, width = code[0]
+    decoded = []
+    
+    dictbin = ["{:b}".format(i).zfill(int(np.ceil(np.log2(256)))) for i in range(256)]
+    dictsymb = [bytes([i]) for i in range(256)]
+  
+    size_dict = len(dictsymb)
+    i = 1
+    while i < len(code):
+        block = code[i]
+        if block in dictbin :
+            decoded_block = dictsymb[dictbin.index(block)]
+            decoded += decoded_block
+
+            if i+1 < len(code):
+                tmp_dict_entry = []
+                for item in decoded_block:
+                    tmp_dict_entry += [item]
+                dictsymb += [tmp_dict_entry]
+                dictbin += ["{:b}".format(size_dict)]
+                size_dict +=1
+
+                # Ajout bit pour encoder si necessaire
+                if np.ceil(np.log2(size_dict)) > len(dictbin[0]):
+                    for j in range(size_dict):
+                        dictbin[j] = "{:b}".format(j).zfill(int(np.ceil(np.log2(size_dict))))
+
+                new_dict_entry = tmp_dict_entry + [dictsymb[dictbin.index(code[i+1])][0]]
+                dictsymb[-1] = new_dict_entry
+        else:
+            print("Yup I don't what the fuck that is")
+            return
+        i += 1     
+    arr = np.frombuffer(bytes(decoded), dtype=np.uint8)
+    arr = arr.reshape((height, width, 3))
+    return Image.fromarray(arr, mode="RGB")
 
 def LZW_decode(codes, shape):
     """
@@ -155,7 +313,53 @@ def LZW_decode(codes, shape):
 
     return Image.fromarray(arr, mode="RGB")
 
+def pack_lzw_codes(codes):
+    """
+    Pack les codes LZW dans un flux binaire.
+    Retourne un bytes object.
+    """
+    bitstream = 0
+    bit_len = 0
+    output = bytearray()
+
+    max_code = 256
+    bits = 9
+
+    for code in codes:
+        # Ajuster la taille des codes
+        if max_code >= (1 << bits):
+            bits += 1
+
+        bitstream = (bitstream << bits) | code
+        bit_len += bits
+        max_code += 1
+
+        while bit_len >= 8:
+            bit_len -= 8
+            output.append((bitstream >> bit_len) & 0xFF)
+
+    if bit_len > 0:
+        output.append((bitstream << (8 - bit_len)) & 0xFF)
+
+    return bytes(output)
 
 #analyser_image_complete("image1_natural.png", "Image naturelle")
 #analyser_image_complete("image2_synthetic.png", "Image synthétique")
-analyser_image_complete("image3_binary.png", "Image binary")
+#analyser_image_complete("image3_binary.png", "Image binary")
+images = [
+    "image1_natural.png",
+    "image2_synthetic.png",
+    "image3_binary.png"
+]
+
+titres = [
+    "Naturelle",
+    "Synthétique",
+    "Binaire"
+]
+
+#table_comparative(images, titres)
+
+evaluation_compression_d_image("image1_natural.png", "Image naturelle")
+#evaluation_compression_d_image("image2_synthetic.png", "Image synthétique")
+#evaluation_compression_d_image("image3_binary.png", "Image binary")
